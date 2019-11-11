@@ -88,6 +88,8 @@ class RtspMQTT:
         elif mtype == Gst.MessageType.EOS:
             # dHandle End of Stream
             print("End of stream")
+            #TODO: this does not cause state change to not playing
+            self._rtsp_stop_pipeline()
         elif mtype == Gst.MessageType.ERROR:
             # Handle Errors
             err, debug = message.parse_error() 

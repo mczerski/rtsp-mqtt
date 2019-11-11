@@ -1,0 +1,10 @@
+[Unit]
+Description=RTSP MQTT service
+Requires=network.target
+
+[Service]
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/local/bin/rtsp_mqtt --broker-host openhabianpi.local --rtsp-host livingroom-osmc.local --alsa-device softvol
+
+[Install]
+WantedBy=multi-user.target

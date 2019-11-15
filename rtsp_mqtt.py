@@ -6,6 +6,7 @@ gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GObject
 import sys
 import socket
+import threading
 import argparse
 
 
@@ -23,6 +24,9 @@ class RtspMQTT:
         self._alsaDevice = alsaDevice
         self._command = f'rtspsrc location=rtsp://{rtspHost}:{rtspPort}/test buffer-mode=4 ntp-sync=true ! rtpL16depay ! audioconvert ! audioresample ! alsasink device={alsaDevice}'
         self._pipeline_state = None
+        self._mute = True
+        self._timer = threading.Timer(5, self._check_started)
+        self._lock = threading.Lock()
         
         self._topicDispatcher = {
             "mute": self._clientMute,
@@ -38,11 +42,12 @@ class RtspMQTT:
         self._clientStatus(None)
 
     def _mqtt_on_message(self, client, obj, msg):
-        payload = msg.payload.decode('utf-8')
-        print ('received topic: %s. payload: %s' % (msg.topic, payload))
-        parts = msg.topic.split("/")
-        method = self._topicDispatcher.get(parts[-1], lambda payload: None)
-        method(payload)
+        with self._lock:
+            payload = msg.payload.decode('utf-8')
+            print ('received topic: %s. payload: %s' % (msg.topic, payload))
+            parts = msg.topic.split("/")
+            method = self._topicDispatcher.get(parts[-1], lambda payload: None)
+            method(payload)
 
     def _makeTopic(self, *parts):
         return "/".join([self._rootTopic+'out', 'client', self._hostname] + list(parts))
@@ -50,17 +55,18 @@ class RtspMQTT:
     def _clientMute(self, payload):
         if payload == "1":
             self._rtsp_stop_pipeline()
+            self._stop_timer()
         elif payload == "0":
             self._rtsp_start_pipeline()
+            self._start_timer()
 
-    def _send_mute(self, mute):
+    def _send_mute(self):
         topic = self._makeTopic('mute')
-        payload = "1" if mute else "0"
+        payload = "1" if self._mute else "0"
         self._mqttClient.publish(topic, payload)
 
     def _clientStatus(self, _):
-        mute = not (self._pipeline_state is not None and self._pipeline_state == Gst.State.PLAYING)
-        self._send_mute(mute)
+        self._send_mute()
 
     def _rtsp_start_pipeline(self):
         self._pipeline = Gst.parse_launch(self._command)
@@ -72,34 +78,49 @@ class RtspMQTT:
     def _rtsp_stop_pipeline(self):
         self._pipeline.set_state(Gst.State.NULL)
 
+    def _start_timer(self):
+        self._timer = threading.Timer(5, self._check_started)
+        self._timer.start()
+
+    def _stop_timer(self):
+        self._timer.cancel()
+
+    def _check_started(self):
+        playing = self._pipeline_state is not None and self._pipeline_state == Gst.State.PLAYING
+        if not self._mute and not playing:
+            self._rtsp_start_pipeline()
+        if not self._mute:
+            self._start_timer()
+
     def _rtsp_on_message(self, bus, message, loop):
         """
             Gstreamer Message Types and how to parse
             https://lazka.github.io/pgi-docs/Gst-1.0/flags.html#Gst.MessageType
         """ 
-        mtype = message.type
-        if mtype == Gst.MessageType.STATE_CHANGED and message.src == self._pipeline:
-            old, new, pending = message.parse_state_changed()
-            self._pipeline_state = new
-            if new == Gst.State.PLAYING:
-                self._send_mute(False)
-            elif old == Gst.State.PLAYING:
-                self._send_mute(True)
-        elif mtype == Gst.MessageType.EOS:
-            # dHandle End of Stream
-            print("End of stream")
-            #TODO: this does not cause state change to not playing
-            self._rtsp_stop_pipeline()
-        elif mtype == Gst.MessageType.ERROR:
-            # Handle Errors
-            err, debug = message.parse_error() 
-            print(err, debug) 
-        elif mtype == Gst.MessageType.WARNING:
-            # Handle warnings
-            err, debug = message.parse_warning()
-            print(err, debug)
-  
-        return True
+        with self._lock:
+            mtype = message.type
+            if mtype == Gst.MessageType.STATE_CHANGED and message.src == self._pipeline:
+                old, new, pending = message.parse_state_changed()
+                print(f'State changed from {old} to {new}')
+                self._pipeline_state = new
+                if new == Gst.State.PLAYING:
+                    self._mute = False
+                    self._send_mute()
+                elif old == Gst.State.PLAYING:
+                    self._mute = True
+                    self._send_mute()
+            elif mtype == Gst.MessageType.EOS:
+                print("end of stream")
+                self._rtsp_stop_pipeline()
+                self._rtsp_start_pipeline()
+            elif mtype == Gst.MessageType.ERROR:
+                err, debug = message.parse_error() 
+                print(err, debug) 
+            elif mtype == Gst.MessageType.WARNING:
+                err, debug = message.parse_warning()
+                print(err, debug)
+      
+            return True
 
     def run(self):
         self._mqttClient.connect_async(self._brokerHost, self._brokerPort)

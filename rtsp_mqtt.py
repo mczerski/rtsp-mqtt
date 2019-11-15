@@ -4,14 +4,18 @@ import paho.mqtt.client as mqtt
 import gi
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GObject
+from sysfs.gpio import Controller, OUTPUT
+import os
 import sys
 import socket
 import threading
 import argparse
+import contextlib
+import json
 
 
 class RtspMQTT:
-    def __init__(self, brokerHost, brokerPort, rootTopic, rtspHost, rtspPort, alsaDevice):
+    def __init__(self, brokerHost, brokerPort, rootTopic, rtspHost, rtspPort, alsaDevice, gpio):
         self._rootTopic = rootTopic
         self._hostname = socket.gethostname()
         self._mqttClient = mqtt.Client()
@@ -22,6 +26,7 @@ class RtspMQTT:
         self._rtspHost = rtspHost
         self._rtspPort = rtspPort
         self._alsaDevice = alsaDevice
+        self._gpio = gpio
         self._command = f'rtspsrc location=rtsp://{rtspHost}:{rtspPort}/test buffer-mode=4 ntp-sync=true ! rtpL16depay ! audioconvert ! audioresample ! alsasink device={alsaDevice}'
         self._pipeline_state = None
         self._mute = True
@@ -105,9 +110,11 @@ class RtspMQTT:
                 self._pipeline_state = new
                 if new == Gst.State.PLAYING:
                     self._mute = False
+                    self._gpio.set()
                     self._send_mute()
                 elif old == Gst.State.PLAYING:
                     self._mute = True
+                    self._gpio.reset()
                     self._send_mute()
             elif mtype == Gst.MessageType.EOS:
                 print("end of stream")
@@ -133,23 +140,50 @@ class RtspMQTT:
             self._mqttClient.loop_stop()
             raise
 
+config = {
+    'broker-host': 'localhost',
+    'broker-port': 1883,
+    'rtsp-host': 'localhost',
+    'rtsp-port': 8554,
+    'alsa-device': 'hw:0,0',
+    'gpio-pin': 0
+}
+configPath = '/etc/rtsp-mqtt.json'
+if os.path.exists(configPath):
+    config.update(json.load(open(configPath)))
+
 parser = argparse.ArgumentParser()
-parser.add_argument('--broker-host', default='localhost')
-parser.add_argument('--broker-port', type=int, default=1883)
-parser.add_argument('--rtsp-host', default='localhost')
-parser.add_argument('--rtsp-port', type=int, default=8554)
-parser.add_argument('--alsa-device', default='default')
+parser.add_argument('--broker-host', default=config.get('broker-host'))
+parser.add_argument('--broker-port', type=int, default=config.get('broker-port'))
+parser.add_argument('--rtsp-host', default=config.get('rtsp-host'))
+parser.add_argument('--rtsp-port', type=int, default=config.get('rtsp-port'))
+parser.add_argument('--alsa-device', default=config.get('alsa-device'))
+parser.add_argument("--gpio-pin", type=int, default=config.get('gpio-pin'))
 args = parser.parse_args()
 
 Gst.init(sys.argv)
+Controller.available_pins = [args.gpio_pin]
 
-rtsp_mqtt = RtspMQTT(
-        brokerHost=args.broker_host,
-        brokerPort=args.broker_port,
-        rootTopic='snapcast',
-        rtspHost=args.rtsp_host,
-        rtspPort=args.rtsp_port,
-        alsaDevice=args.alsa_device)
+@contextlib.contextmanager
+def speaker_gpio(gpio_pin):
+    print(f'Allocing pin {gpio_pin}', sys.stderr)
+    gpio = Controller.alloc_pin(gpio_pin, OUTPUT)
+    try:
+        yield gpio
+    finally:
+        print(f'Deallocing pin {gpio_pin}', sys.stderr)
+        gpio.reset()
+        Controller.dealloc_pin(gpio_pin)
 
-rtsp_mqtt.run()
+with speaker_gpio(args.gpio_pin) as gpio:
+    rtsp_mqtt = RtspMQTT(
+            brokerHost=args.broker_host,
+            brokerPort=args.broker_port,
+            rootTopic='snapcast',
+            rtspHost=args.rtsp_host,
+            rtspPort=args.rtsp_port,
+            alsaDevice=args.alsa_device,
+            gpio=gpio)
+
+    rtsp_mqtt.run()
 

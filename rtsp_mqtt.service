@@ -4,7 +4,9 @@ Requires=network.target
 
 [Service]
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/local/bin/rtsp_mqtt --broker-host openhabianpi.local --rtsp-host livingroom-osmc.local --alsa-device softvol
+ExecStart=/usr/local/bin/rtsp_mqtt
+Restart=on-failure
+RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target

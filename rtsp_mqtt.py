@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python
 
 import paho.mqtt.client as mqtt
 import gi
@@ -27,7 +27,7 @@ class RtspMQTT:
         self._rtspPort = rtspPort
         self._alsaDevice = alsaDevice
         self._gpio = gpio
-        self._command = f'rtspsrc location=rtsp://{rtspHost}:{rtspPort}/test buffer-mode=4 ntp-sync=true ! rtpL16depay ! audioconvert ! audioresample ! alsasink device={alsaDevice}'
+        self._command = 'rtspsrc location=rtsp://{}:{}/test buffer-mode=4 ntp-sync=true ! rtpL16depay ! audioconvert ! audioresample ! alsasink device={}'.format(rtspHost, rtspPort, alsaDevice)
         self._pipeline_state = None
         self._mute = True
         self._timer = threading.Timer(5, self._check_started)
@@ -106,7 +106,7 @@ class RtspMQTT:
             mtype = message.type
             if mtype == Gst.MessageType.STATE_CHANGED and message.src == self._pipeline:
                 old, new, pending = message.parse_state_changed()
-                print(f'State changed from {old} to {new}')
+                print('State changed from {} to {}'.format(old, new))
                 self._pipeline_state = new
                 if new == Gst.State.PLAYING:
                     self._mute = False
@@ -117,7 +117,7 @@ class RtspMQTT:
                     self._gpio.reset()
                     self._send_mute()
             elif mtype == Gst.MessageType.EOS:
-                print("end of stream")
+                print('end of stream')
                 self._rtsp_stop_pipeline()
                 self._rtsp_start_pipeline()
             elif mtype == Gst.MessageType.ERROR:
@@ -166,12 +166,12 @@ Controller.available_pins = [args.gpio_pin]
 
 @contextlib.contextmanager
 def speaker_gpio(gpio_pin):
-    print(f'Allocing pin {gpio_pin}', sys.stderr)
+    print('Allocing pin {gpio_pin}.format(gpio_pin)', sys.stderr)
     gpio = Controller.alloc_pin(gpio_pin, OUTPUT)
     try:
         yield gpio
     finally:
-        print(f'Deallocing pin {gpio_pin}', sys.stderr)
+        print('Deallocing pin {}'.format(gpio_pin), sys.stderr)
         gpio.reset()
         Controller.dealloc_pin(gpio_pin)
 

@@ -15,7 +15,7 @@ import json
 
 
 class RtspMQTT:
-    def __init__(self, brokerHost, brokerPort, rootTopic, rtspHost, rtspPort, alsaDevice, gpio):
+    def __init__(self, brokerHost, brokerPort, rootTopic, rtspHost, rtspPort, alsaDevice, latency, gpio):
         self._rootTopic = rootTopic
         self._hostname = socket.gethostname()
         self._mqttClient = mqtt.Client()
@@ -27,7 +27,7 @@ class RtspMQTT:
         self._rtspPort = rtspPort
         self._alsaDevice = alsaDevice
         self._gpio = gpio
-        self._command = 'rtspsrc location=rtsp://{}:{}/test buffer-mode=4 ntp-sync=true ! rtpL16depay ! audioconvert ! audioresample ! alsasink device={}'.format(rtspHost, rtspPort, alsaDevice)
+        self._command = 'rtspsrc location=rtsp://{}:{}/test buffer-mode=4 ntp-sync=true latency={} ! rtpL16depay ! audioconvert ! audioresample ! alsasink device={}'.format(rtspHost, rtspPort, latency, alsaDevice)
         self._pipeline_state = None
         self._mute = True
         self._timer = threading.Timer(5, self._check_started)
@@ -146,6 +146,7 @@ config = {
     'rtsp-host': 'localhost',
     'rtsp-port': 8554,
     'alsa-device': 'hw:0,0',
+    'latency': 2000,
     'gpio-pin': 0
 }
 configPath = '/etc/rtsp-mqtt.json'
@@ -158,6 +159,7 @@ parser.add_argument('--broker-port', type=int, default=config.get('broker-port')
 parser.add_argument('--rtsp-host', default=config.get('rtsp-host'))
 parser.add_argument('--rtsp-port', type=int, default=config.get('rtsp-port'))
 parser.add_argument('--alsa-device', default=config.get('alsa-device'))
+parser.add_argument('--latency', type=int, default=config.get('latency'))
 parser.add_argument("--gpio-pin", type=int, default=config.get('gpio-pin'))
 args = parser.parse_args()
 
@@ -166,6 +168,14 @@ Controller.available_pins = [args.gpio_pin]
 
 @contextlib.contextmanager
 def speaker_gpio(gpio_pin):
+    if gpio_pin == 0:
+        print('Using DummyGPIO')
+        class DummyGPIO:
+            def set(self):
+                pass
+            def reset(self):
+                pass
+        yield DummyGPIO()
     print('Allocing pin {gpio_pin}.format(gpio_pin)', sys.stderr)
     gpio = Controller.alloc_pin(gpio_pin, OUTPUT)
     try:
@@ -183,6 +193,7 @@ with speaker_gpio(args.gpio_pin) as gpio:
             rtspHost=args.rtsp_host,
             rtspPort=args.rtsp_port,
             alsaDevice=args.alsa_device,
+            latency=args.latency,
             gpio=gpio)
 
     rtsp_mqtt.run()

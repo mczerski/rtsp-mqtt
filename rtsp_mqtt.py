@@ -59,9 +59,11 @@ class RtspMQTT:
 
     def _clientMute(self, payload):
         if payload == "1":
+            self._mute = True
             self._rtsp_stop_pipeline()
             self._stop_timer()
         elif payload == "0":
+            self._mute = False
             self._rtsp_start_pipeline()
             self._start_timer()
 

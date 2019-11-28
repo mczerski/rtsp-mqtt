@@ -3,7 +3,8 @@
 import paho.mqtt.client as mqtt
 import gi
 gi.require_version('Gst', '1.0')
-from gi.repository import Gst, GObject
+gi.require_version('GstNet', '1.0')
+from gi.repository import Gst, GstNet, GObject
 from sysfs.gpio import Controller, OUTPUT
 import os
 import sys
@@ -27,7 +28,7 @@ class RtspMQTT:
         self._rtspPort = rtspPort
         self._alsaDevice = alsaDevice
         self._gpio = gpio
-        self._command = 'rtspsrc location=rtsp://{}:{}/test buffer-mode=4 ntp-sync=true latency={} ! rtpL16depay ! audioconvert ! audioresample ! alsasink device={}'.format(rtspHost, rtspPort, latency, alsaDevice)
+        self._command = 'rtspsrc location=rtsp://{}:{}/test ntp-time-source=3 buffer-mode=4 ntp-sync=true latency={} ! rtpL16depay ! audioconvert ! audioresample ! alsasink device={}'.format(rtspHost, rtspPort, latency, alsaDevice)
         self._pipeline_state = None
         self._mute = True
         self._timer = threading.Timer(5, self._check_started)
@@ -38,6 +39,11 @@ class RtspMQTT:
             "status": self._clientStatus
         }
         self._quedRequests = {}
+
+	#GstNet.ptp_statistics_callback_add(self._ptp_statistics, None)
+	self._ptp_clock = GstNet.PtpClock.new('ptp', 0)
+	self._ptp_clock.wait_for_sync(Gst.CLOCK_TIME_NONE)
+	print('ptp clock synced')
 
     def _mqtt_on_connect(self, client, userdata, flags, rc):
         print('connected to [%s:%s] with result code %d' % (self._brokerHost, self._brokerPort, rc))
@@ -80,7 +86,8 @@ class RtspMQTT:
         bus = self._pipeline.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self._rtsp_on_message, None)
-        self._pipeline.set_state(Gst.State.PLAYING)
+        self._pipeline.use_clock(self._ptp_clock)
+	self._pipeline.set_state(Gst.State.PLAYING)
 
     def _rtsp_stop_pipeline(self):
         self._pipeline.set_state(Gst.State.NULL)
@@ -131,6 +138,10 @@ class RtspMQTT:
       
             return True
 
+    def _ptp_statistics(self, domain, stats, _):
+	print(stats.to_string())
+	return True
+ 
     def run(self):
         self._mqttClient.connect_async(self._brokerHost, self._brokerPort)
         self._mqttClient.loop_start()
@@ -178,12 +189,12 @@ def speaker_gpio(gpio_pin):
             def reset(self):
                 pass
         yield DummyGPIO()
-    print('Allocing pin {gpio_pin}.format(gpio_pin)', sys.stderr)
+    print('Allocing pin {}'.format(gpio_pin))
     gpio = Controller.alloc_pin(gpio_pin, OUTPUT)
     try:
         yield gpio
     finally:
-        print('Deallocing pin {}'.format(gpio_pin), sys.stderr)
+        print('Deallocing pin {}'.format(gpio_pin))
         gpio.reset()
         Controller.dealloc_pin(gpio_pin)
 

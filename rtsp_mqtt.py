@@ -16,7 +16,7 @@ import json
 
 
 class RtspMQTT:
-    def __init__(self, brokerHost, brokerPort, rootTopic, rtspHost, rtspPort, alsaDevice, latency, gpio):
+    def __init__(self, brokerHost, brokerPort, rootTopic, rtspHost, rtspPort, netClockHost, netClockPort, alsaDevice, latency, gpio):
         self._rootTopic = rootTopic
         self._hostname = socket.gethostname()
         self._mqttClient = mqtt.Client()
@@ -26,6 +26,8 @@ class RtspMQTT:
         self._brokerPort = brokerPort
         self._rtspHost = rtspHost
         self._rtspPort = rtspPort
+        self._netClockHost = netClockHost
+        self._netClockPort = netClockPort
         self._alsaDevice = alsaDevice
         self._gpio = gpio
         self._command = 'rtspsrc location=rtsp://{}:{}/test ntp-time-source=3 buffer-mode=4 ntp-sync=true latency={} ! rtpL16depay ! audioconvert ! audioresample ! alsasink device={}'.format(rtspHost, rtspPort, latency, alsaDevice)
@@ -40,10 +42,14 @@ class RtspMQTT:
         }
         self._quedRequests = {}
 
+        self._net_client_clock = GstNet.NetClientClock.new('net_clock', self._netClockHost, self._netClockPort, 0)
+	self._net_client_clock.wait_for_sync(Gst.CLOCK_TIME_NONE)
+	print('net clock synced')
+
 	#GstNet.ptp_statistics_callback_add(self._ptp_statistics, None)
-	self._ptp_clock = GstNet.PtpClock.new('ptp', 0)
-	self._ptp_clock.wait_for_sync(Gst.CLOCK_TIME_NONE)
-	print('ptp clock synced')
+	#self._ptp_clock = GstNet.PtpClock.new('ptp', 0)
+	#self._ptp_clock.wait_for_sync(Gst.CLOCK_TIME_NONE)
+	#print('ptp clock synced')
 
     def _mqtt_on_connect(self, client, userdata, flags, rc):
         print('connected to [%s:%s] with result code %d' % (self._brokerHost, self._brokerPort, rc))
@@ -86,7 +92,8 @@ class RtspMQTT:
         bus = self._pipeline.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self._rtsp_on_message, None)
-        self._pipeline.use_clock(self._ptp_clock)
+        self._pipeline.use_clock(self._net_client_clock)
+        #self._pipeline.use_clock(self._ptp_clock)
 	self._pipeline.set_state(Gst.State.PLAYING)
 
     def _rtsp_stop_pipeline(self):
@@ -158,6 +165,8 @@ config = {
     'broker-port': 1883,
     'rtsp-host': 'localhost',
     'rtsp-port': 8554,
+    'net-clock-host': 'localhost',
+    'net-clock-port': 8554,
     'alsa-device': 'hw:0,0',
     'latency': 2000,
     'gpio-pin': 0
@@ -171,6 +180,8 @@ parser.add_argument('--broker-host', default=config.get('broker-host'))
 parser.add_argument('--broker-port', type=int, default=config.get('broker-port'))
 parser.add_argument('--rtsp-host', default=config.get('rtsp-host'))
 parser.add_argument('--rtsp-port', type=int, default=config.get('rtsp-port'))
+parser.add_argument('--net-clock-host', default=config.get('net-clock-host'))
+parser.add_argument('--net-clock-port', type=int, default=config.get('net-clock-port'))
 parser.add_argument('--alsa-device', default=config.get('alsa-device'))
 parser.add_argument('--latency', type=int, default=config.get('latency'))
 parser.add_argument("--gpio-pin", type=int, default=config.get('gpio-pin'))
@@ -205,6 +216,8 @@ with speaker_gpio(args.gpio_pin) as gpio:
             rootTopic='snapcast',
             rtspHost=args.rtsp_host,
             rtspPort=args.rtsp_port,
+            netClockHost=args.net_clock_host,
+            netClockPort=args.net_clock_port,
             alsaDevice=args.alsa_device,
             latency=args.latency,
             gpio=gpio)

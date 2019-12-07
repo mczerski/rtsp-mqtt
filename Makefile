@@ -21,7 +21,6 @@ install:
 	$(INSTALL_DIR) "$(BINDIR)"
 	$(INSTALL_PROGRAM) rtsp_mqtt.py "$(BINDIR)/rtsp_mqtt"
 	$(INSTALL_DATA) rtsp_mqtt.service "$(INITDIR_SYSTEMD)/rtsp_mqtt.service"
-	systemctl enable rtsp_mqtt.service
 
 uninstall:
 	$(RM) "$(BINDIR)/rtsp_mqtt"
